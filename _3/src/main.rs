@@ -4,36 +4,32 @@ use itertools::Itertools;
 fn main() {
     let input = read_input();
 
-    let mut lineEntites : Vec<Vec<Entity>> = vec![];
+    let mut lineNumbers : Vec<Vec<NumberData>> = vec![];
 
     input.iter()
-        .for_each(|line| lineEntites.push(parse_line(line)));
+        .for_each(|line| lineNumbers.push(parse_line_numbers(line)));
 
-    let mut lineBnd : Vec<Vec<usize>> = vec![];
-    lineBnd.resize(lineEntites.len() + 1, vec![]);
+    let mut lineSymbols : Vec<Vec<SymbolData>> = vec![];
 
-    for (lineNo,v) in lineEntites.iter().enumerate() {
-        v.iter().for_each(
-            |e| if let Entity::Symbol(sb) = e {
-                sb.get_boundaries(lineNo).iter().for_each(|bnd| lineBnd.get_mut(bnd.y).unwrap().push(bnd.x))
-                }
-            )
+    input.iter()
+        .for_each(|line| lineSymbols.push(parse_line_symbols(line)));
+
+    let mut result : u32 = 0;
+
+   for (lineNo,v) in lineSymbols.iter().enumerate() {
+        for ls in lineSymbols.get(lineNo).unwrap() {
+            let bnd = ls.get_boundaries(lineNo);
+
+            let numbers = get_adjacent_numbers_from_line(lineNo, &bnd, &lineNumbers);
+            if numbers.len() == 2 {
+                result += numbers.iter().map(|n| n.v).product::<u32>();
+            }
+        }
     }
 
-    let mut nbrs : Vec<u32> = vec![];
+   println!("{}", result);
 
-    for (lineNo,v) in lineEntites.iter().enumerate() {
-        let bnd = lineBnd.get(lineNo).unwrap();
 
-        v.iter().for_each(
-            |e| if let Entity::Number(nd) = e {
-                if nd.touches(bnd) { nbrs.push(nd.v); }
-                }
-            )
-    }
-
-    let x : u32 = nbrs.iter().sum();
-    print!("{}", x)
 
 
     // let x : u32 = input.iter()
@@ -41,6 +37,23 @@ fn main() {
     //     .sum();
 
    // println!("{}", x);
+}
+
+fn get_adjacent_numbers_from_line<'a>(centerline : usize, adj : &Vec<Vec<usize>>, numbers : &'a Vec<Vec<NumberData>>) -> Vec<&'a NumberData> {
+    let mut result : Vec<&NumberData> = vec![];
+
+    let baseline = match centerline == 0 { true => centerline, false => centerline - 1 };
+
+    for lineNo in baseline..(baseline+adj.len()) {
+        let lnum = numbers.get(lineNo).unwrap();
+        let ladj = adj.get(lineNo - baseline).unwrap();
+
+        //let x : Vec<NumberData> = lnum.iter().filter(|&n| n.touches(ladj)).map(|&n| -> NumberData { n.clone()}).collect();
+
+        result.extend( lnum.iter().filter(|n| n.touches(ladj)) );
+    }
+
+    return result;
 }
 
 #[derive(Debug)]
@@ -70,16 +83,22 @@ struct SymbolData {
 }
 
 impl SymbolData {
-    fn get_boundaries(&self, lineNo : usize) -> Vec<Point> {
-        let x =  ((lineNo as isize - 1)..=(lineNo as isize + 1 ))
-            .cartesian_product((self.start as isize - 1)..=(self.start as isize + 1))
-            .filter(|p| p.0 >= 0 && p.1 >= 0)
-            .map(|p| Point{x : p.1 as usize, y : p.0 as usize})
-            .collect::<Vec<Point>>();
+    fn get_boundaries(&self, lineNo : usize) -> Vec<Vec<usize>> {
 
-        println!("{},{} -> {:?}", &lineNo, self.start, &x);
+        let mut result : Vec<Vec<usize>> = vec![];
 
-        return x;
+        let topbtml : Vec<usize> = ((self.start as isize - 1)..=(self.start as isize + 1))
+            .filter(|&p| p >= 0)
+            .map(|p| p as usize)
+            .collect_vec();
+
+        if lineNo > 0 {
+            result.push(topbtml.clone());
+        }
+        result.push(topbtml.clone());
+        result.push(topbtml.clone());
+
+        return result;
     }
 }
 
@@ -89,8 +108,9 @@ enum Entity {
     Symbol(SymbolData)
 }
 
-fn parse_line(line : &str) -> Vec<Entity> {
-    let mut nums : Vec<NumberData> = vec![];
+
+fn parse_line_numbers(line : &str) -> Vec<NumberData> {
+   let mut nums : Vec<NumberData> = vec![];
 
     line.char_indices()
         .for_each(|c| {
@@ -111,48 +131,14 @@ fn parse_line(line : &str) -> Vec<Entity> {
         });
 
     nums.iter_mut().for_each(|n: &mut NumberData| n.v = line[n.start..n.start+n.len].parse::<u32>().unwrap());
-    let mut ents : Vec<Entity> = nums.into_iter().map(|n| Entity::Number(n)).collect();
-
-    ents.append(&mut line.char_indices()
-        .filter(|c| !char::is_ascii_digit(&c.1) && c.1 != '.')
-        .map(|c| Entity::Symbol(SymbolData{start : c.0}))
-        .collect::<Vec<Entity>>());
-
-    return ents;
+    return nums;
 }
 
-#[test]
-fn test_parse_line() {
-    let fut = parse_line("..12..");
-    assert!(fut.len() == 1);
-    assert!(if let Entity::Number(x) = &fut.first().unwrap() {x.v == 12} else {false} );
-
-    let fut = parse_line("12..");
-    assert!(fut.len() == 1);
-    assert!(if let Entity::Number(x) = &fut.first().unwrap() {x.v == 12} else {false} );
-
-    let fut = parse_line("..12");
-    assert!(fut.len() == 1);
-    assert!(if let Entity::Number(x) = &fut.first().unwrap() {x.v == 12} else {false} );
-
-    let fut = parse_line(".13..12");
-    assert!(fut.len() == 2);
-    assert!(if let Entity::Number(x) = &fut.get(0).unwrap() {x.v == 13} else {false} );
-    assert!(if let Entity::Number(x) = &fut.get(1).unwrap() {x.v == 12} else {false} );
-
-    let fut = parse_line(";..");
-    assert!(fut.len() == 1);
-    assert!(if let Entity::Symbol(x) = &fut.first().unwrap() {x.start == 0} else {false} );
-
-    let fut = parse_line(".*.");
-    assert!(fut.len() == 1);
-    assert!(if let Entity::Symbol(x) = &fut.first().unwrap() {x.start == 1} else {false} );
-
-    let fut = parse_line(".13.!.12");
-    assert!(fut.len() == 3);
-    assert!(if let Entity::Number(x) = &fut.get(0).unwrap() {x.v == 13} else {false} );
-    assert!(if let Entity::Number(x) = &fut.get(1).unwrap() {x.v == 12} else {false} );
-    assert!(if let Entity::Symbol(x) = &fut.get(2).unwrap() {x.start == 4} else {false} );
+fn parse_line_symbols(line : &str) -> Vec<SymbolData> {
+    return line.char_indices()
+        .filter(|c| c.1 == '*')
+        .map(|c| SymbolData{start : c.0})
+       .collect();
 }
 
 fn read_input() -> Vec<String> {
