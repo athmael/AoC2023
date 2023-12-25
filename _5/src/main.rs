@@ -1,5 +1,5 @@
 use std::{fs, iter, str::FromStr};
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap, vec_deque, VecDeque};
 use itertools::Itertools;
 
 fn main() {
@@ -8,32 +8,124 @@ fn main() {
     let mut g = Game::new();
     g.parse(input.iter());
 
-    let locations = g.seeds.iter().map(|s| g.map(*s)).collect_vec();
-    dbg!(&locations);
+    let locations = g.map(&g.seeds);
 
-    dbg!(locations.iter().min().unwrap());
+    let minloc = locations.iter().map(|r| r.0).min().unwrap();
+    dbg!(minloc);
+    //let locations = g.seeds.iter().map(|s| g.map(*s)).collect_vec();
+    //dbg!(&locations);
+
+    //dbg!(locations.iter().min().unwrap());
 }
 
 
 
 #[derive(Debug)]
     struct Range {
-    a : u64,
-    b : u64,
-    c : u64
+    a : u64,    //dst
+    b : u64,    //src
+    c : u64     //len
 }
 
 impl Range {
-    fn map(&self, n : u64) -> Option<u64> {
-        if n >= self.b && n - self.b < self.c {
-            return Some(self.a + n - self.b);
+    fn map(&self, irange : (u64, u64)) -> Option<((u64, u64), Vec<(u64, u64)>)> {
+        if irange.0 + irange.1 > self.b && irange.0 < self.b + self.c {
+            if irange.0 >= self.b && irange.0 + irange.1 <= self.b + self.c {
+                // Fully contained
+                return Some(((self.a + irange.0 - self.b, irange.1), vec![]));
+            }
+            else if irange.0 < self.b && irange.0 + irange.1 > self.b + self.c {
+                // Middle
+                return Some(((self.a, self.c), vec![
+                    (irange.0, self.b - irange.0),
+                    (self.b + self.c, irange.0 + irange.1 - (self.b + self.c))
+                    ]));
+            }
+            else if irange.0 < self.b && irange.0 + irange.1 <= self.b + self.c {
+                // Lower
+                return Some(((self.a, irange.1 - (self.b - irange.0)), vec![
+                    (irange.0, self.b - irange.0)
+                    ]));
+            }
+            else {
+                // Upper
+                return Some(((self.a + irange.0 - self.b, self.b + self.c - irange.0), vec![
+                    (self.b + self.c, irange.0 + irange.1 - (self.b + self.c))
+                    ]));
+            }
         }
         return None;
     }
 }
 
+
+#[test]
+fn test_Range_map() {
+    let sut = Range {a:100, b:10, c:20};
+
+    if let Some(r1) = sut.map((10,20)) {
+        assert_eq!(r1.0.0, 100);
+        assert_eq!(r1.0.1, 20);
+
+        assert!(r1.1.is_empty());
+    }
+    else {
+        assert!(false);
+    }
+
+    if let Some(r1) = sut.map((5,30)) {
+        assert_eq!(r1.0.0, 100);
+        assert_eq!(r1.0.1, 20);
+
+        assert_eq!(r1.1.len(), 2);
+        assert_eq!(r1.1.get(0), Some(&(5u64,5u64)));
+        assert_eq!(r1.1.get(1), Some(&(30u64,5u64)));
+    }
+    else {
+        assert!(false);
+    }
+
+    if let Some(r1) = sut.map((5,20)) {
+        assert_eq!(r1.0.0, 100);
+        assert_eq!(r1.0.1, 15);
+
+        assert_eq!(r1.1.len(), 1);
+        assert_eq!(r1.1.get(0), Some(&(5u64,5u64)));
+    }
+    else {
+        assert!(false);
+    }
+
+    if let Some(r1) = sut.map((15,20)) {
+        assert_eq!(r1.0.0, 105);
+        assert_eq!(r1.0.1, 15);
+
+        assert_eq!(r1.1.len(), 1);
+        assert_eq!(r1.1.get(0), Some(&(30u64,5u64)));
+    }
+    else {
+        assert!(false);
+    }
+
+    if let Some(r1) = sut.map((5,5)) {
+        assert!(false);
+    }
+    else {
+        assert!(true);
+    }
+
+    if let Some(r1) = sut.map((30,5)) {
+        assert!(false);
+    }
+    else {
+        assert!(true);
+    }
+}
+
+
+
 struct Game {
-    seeds : Vec<u64>,
+    seeds : Vec<(u64,u64)>,
     seed_to_soil : Vec<Range>,
     soil_to_fertilizer : Vec<Range>,
     fertilizer_to_water : Vec<Range>,
@@ -85,6 +177,8 @@ impl Game {
     where
         I : Iterator<Item=&'a String>
     {
+        let mut n = vec![];
+
         while let Some(l) = lines.next() {
             if l.is_empty() {
                 return lines;
@@ -94,7 +188,12 @@ impl Game {
             seeds.next();
 
             while let Some(seed) = seeds.next() {
-                self.seeds.push(seed.parse::<u64>().unwrap());
+                n.push(seed.parse::<u64>().unwrap());
+
+                if n.len() == 2 {
+                    self.seeds.push((*n.get(0).unwrap(), *n.get(1).unwrap()));
+                    n.clear();
+                }
             }
         }
 
@@ -126,25 +225,36 @@ impl Game {
         panic!();
     }
 
-    fn map_single(value : u64, recipe : &Vec<Range>) -> u64 {
-        if let Some(n) = recipe.iter().filter_map(|r| r.map(value)).reduce(|v, a| v) {
-            print!("{} -> {}", value, n);
-            return n;
+    fn map_range(value : &Vec<(u64, u64)>, recipe : &Vec<Range>) -> Vec<(u64,u64)> {
+        let mut inr : VecDeque<(u64, u64)> = VecDeque::from(value.to_owned());
+
+        let mut our = vec![];
+
+        'outer: loop {
+            if inr.is_empty() { break; }
+
+            let curr = inr.pop_front().unwrap();
+
+            for r in recipe {
+                if let Some(m) = r.map(curr) {
+                    our.push(m.0);
+                    inr.extend(m.1);
+                    continue 'outer;
+                }
+            }
+            our.push(curr);
         }
-        else {
-            print!("{} -> {}", value, value);
-            return value;
-        }
+        return our;
     }
 
-    fn map(&self, value : u64) -> u64 {
-        let mut iv = Self::map_single(value, &self.seed_to_soil);
-        iv = Self::map_single(iv, &self.soil_to_fertilizer);
-        iv = Self::map_single(iv, &self.fertilizer_to_water);
-        iv = Self::map_single(iv, &self.water_to_light);
-        iv = Self::map_single(iv, &self.light_to_temperature);
-        iv = Self::map_single(iv, &self.temperature_to_humidity);
-        iv = Self::map_single(iv, &self.humidity_to_location);
+    fn map(&self, ranges : &Vec<(u64, u64)>) -> Vec<(u64,u64)> {
+        let mut iv = Self::map_range(ranges, &self.seed_to_soil);
+        iv = Self::map_range(&iv, &self.soil_to_fertilizer);
+        iv = Self::map_range(&iv, &self.fertilizer_to_water);
+        iv = Self::map_range(&iv, &self.water_to_light);
+        iv = Self::map_range(&iv, &self.light_to_temperature);
+        iv = Self::map_range(&iv, &self.temperature_to_humidity);
+        iv = Self::map_range(&iv, &self.humidity_to_location);
 
         println!("\n-------");
 
